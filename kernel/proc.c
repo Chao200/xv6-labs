@@ -291,6 +291,8 @@ fork(void)
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
+  np->mask = p->mask;  // lab2.1
+
   pid = np->pid;
 
   np->state = RUNNABLE;
@@ -693,3 +695,21 @@ procdump(void)
     printf("\n");
   }
 }
+
+
+// *********** lab2.2 ***********
+// @brief 统计不是 unused 状态的进程数
+int 
+nproc()
+{
+  int i;
+  int n = 0;
+  for (i = 0; i < NPROC; i++)
+  {
+    acquire(&(proc[i].lock));
+    if (proc[i].state != UNUSED) n++;
+    release(&(proc[i].lock));
+  }
+  return n;
+}
+// *********** lab2.2 ***********

@@ -36,3 +36,9 @@ entry("getpid");
 entry("sbrk");
 entry("sleep");
 entry("uptime");
+
+### lab2.1 
+# user/trace.c 调用 trace 系统调用 -> markfile 调用 usys.pl 代码通过汇编进入内核 -> 获得跟踪结果输出到屏幕
+# 汇编后的代码可以在 user/usys.S 最后面看到
+entry("trace");   # lab2.1
+entry("sysinfo");  # lab2.2
