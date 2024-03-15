@@ -121,6 +121,25 @@ found:
     return 0;
   }
 
+  // ************* lab3.2.2 *************
+  p->kernelpt = proc_kpt_init();
+  if (p->kernelpt == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  // ************* lab3.2.2 *************
+
+  // ************* lab3.2.3 *************
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK((int) (p - proc));
+  uvmmap(p->kernelpt, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+  // ************* lab3.2.3 *************
+
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -129,6 +148,32 @@ found:
 
   return p;
 }
+
+// ************** lab3.6 **************
+// free kernel pagetable
+// 模仿 vm.c 中的 freewalk，但注意物理地址没有释放
+// 最后一层叶节点没有释放，标志位并没有重置
+// 故需要修改一下
+void 
+proc_freekpt(pagetable_t pagetable)
+{
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V)){
+      pagetable[i] = 0;
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0)
+      {
+        uint64 child = PTE2PA(pte);
+        proc_freekpt((pagetable_t)child);
+      }
+    } else if(pte & PTE_V){
+      panic("proc free kpt: leaf");
+    }
+  }
+  kfree((void*)pagetable);
+}
+// ************** lab3.6 **************
 
 // free a proc structure and the data hanging from it,
 // including user pages.
@@ -142,6 +187,17 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+
+  // *********** lab3.6 ***********
+   // 删除kernel stack
+  uvmunmap(p->kernelpt, p->kstack, 1, 1);
+  p->kstack = 0;
+
+    // 删除kernel pagetable
+  if (p->kernelpt)
+    proc_freekpt(p->kernelpt);
+  // *********** lab3.6 ***********
+
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -221,6 +277,10 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  // *************** lab3.3.3 ***************
+  u2kvmcopy(p->pagetable, p->kernelpt, 0, p->sz);
+  // *************** lab3.3.3 ***************
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -243,9 +303,19 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    // ********* lab3.3.5 *********
+    // 不能覆盖PLIC地址空间
+    if (PGROUNDUP(sz + n) >= PLIC)
+      return -1;
+    // ********* lab3.3.5 *********
+
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    
+    // ********* lab3.3.2 *********
+    u2kvmcopy(p->pagetable, p->kernelpt, sz-n, sz);
+    // ********* lab3.3.2 *********
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
@@ -288,6 +358,10 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  // ************** lab3.3.2 **************
+  u2kvmcopy(np->pagetable, np->kernelpt, 0, np->sz);
+  // ************** lab3.3.2 **************
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -473,6 +547,12 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        // ************** lab3.2.4 **************
+          // 将当前进程 p 的页表存入 satp 寄存器
+        uvminithart(p->kernelpt);
+        // ************** lab3.2.4 **************
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
@@ -486,6 +566,10 @@ scheduler(void)
 #if !defined (LAB_FS)
     if(found == 0) {
       intr_on();
+      // ************** lab3.2.5 **************
+        // 没有进程在运行则使用内核原来的kernel pagtable
+      kvminithart();
+      // ************** lab3.2.5 **************
       asm volatile("wfi");
     }
 #else
